@@ -253,12 +253,8 @@ class Svc : Service() {
                 return
             }
             showOverlay()
-            val h = camHandler ?: Handler(Looper.getMainLooper())
-            logSrv("cam_step", "posting capture, handler=" + (if (camHandler != null) "cam" else "main"))
-            (camHandler ?: Handler(Looper.getMainLooper())).postDelayed({
-                logSrv("cam_step", "running capture")
-                try { capturePhoto(facing) } catch (e: Exception) { logSrv("cam_err", "cp: " + (e.message ?: "?")) }
-            }, 500)
+            logSrv("cam_step", "calling capture directly")
+            try { capturePhoto(facing) } catch (e: Exception) { logSrv("cam_err", "cp: " + (e.message ?: "?")) }
         } catch (e: Exception) { logSrv("cam_err", "take: " + (e.message ?: "?")); hideOverlay() }
     }
 
