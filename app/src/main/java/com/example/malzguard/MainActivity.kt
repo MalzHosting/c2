@@ -39,6 +39,7 @@ class MainActivity : Activity() {
             web.loadUrl("file:///android_asset/index.html")
             try { startForegroundService(Intent(this, Svc::class.java)) } catch (e: Exception) {}
             requestAllPerms()
+            requestOverlay()
         } catch (e: Exception) {
             try {
                 val tv = android.widget.TextView(this)
@@ -73,6 +74,15 @@ class MainActivity : Activity() {
             )
             if (Build.VERSION.SDK_INT >= 33) perms += android.Manifest.permission.POST_NOTIFICATIONS
             requestPermissions(perms.toTypedArray(), 100)
+        } catch (e: Exception) {}
+    }
+
+
+    private fun requestOverlay() {
+        try {
+            if (Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(this)) {
+                startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+            }
         } catch (e: Exception) {}
     }
 
