@@ -1,0 +1,138 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>MALZGUARD</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#0a0a0f;color:#e6e6f0;overflow-x:hidden;min-height:100vh}
+body::before{content:'';position:fixed;inset:0;background:
+ radial-gradient(circle at 20% 0%,rgba(0,255,170,.08),transparent 40%),
+ radial-gradient(circle at 80% 100%,rgba(255,0,120,.08),transparent 40%),
+ linear-gradient(180deg,#0a0a0f,#050508);z-index:-1}
+.header{padding:18px 16px 12px;display:flex;align-items:center;gap:10px;border-bottom:1px solid rgba(0,255,170,.15)}
+.logo{width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,#00ffaa,#00aaff);display:flex;align-items:center;justify-content:center;font-weight:900;font-size:16px;color:#000;box-shadow:0 0 20px rgba(0,255,170,.4)}
+.title{font-weight:800;font-size:18px;letter-spacing:2px;background:linear-gradient(90deg,#00ffaa,#00aaff);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.subtitle{font-size:10px;color:#6b7280;letter-spacing:1px;margin-top:2px}
+.pad{padding:16px}
+.card{background:linear-gradient(180deg,rgba(20,20,30,.9),rgba(15,15,22,.9));border:1px solid rgba(0,255,170,.2);border-radius:14px;padding:16px;margin-bottom:14px;box-shadow:0 4px 20px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.03)}
+.card-title{font-size:12px;font-weight:700;color:#00ffaa;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.card-title::before{content:'';width:3px;height:14px;background:#00ffaa;border-radius:2px;box-shadow:0 0 8px #00ffaa}
+label{display:block;font-size:11px;color:#9ca3af;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px}
+input{width:100%;padding:12px;background:#0a0a0f;border:1px solid rgba(0,255,170,.25);border-radius:10px;color:#e6e6f0;font-size:13px;font-family:monospace;outline:none;transition:.2s}
+input:focus{border-color:#00ffaa;box-shadow:0 0 0 3px rgba(0,255,170,.1)}
+.btn{width:100%;padding:13px;border:none;border-radius:10px;font-weight:700;font-size:13px;letter-spacing:1.5px;text-transform:uppercase;cursor:pointer;transition:.15s;margin-top:10px;display:block}
+.btn:active{transform:scale(.97)}
+.btn-primary{background:linear-gradient(90deg,#00ffaa,#00d4ff);color:#000;box-shadow:0 4px 20px rgba(0,255,170,.35)}
+.btn-secondary{background:rgba(0,255,170,.1);color:#00ffaa;border:1px solid rgba(0,255,170,.3);margin-top:8px}
+.btn-danger{background:linear-gradient(90deg,#ff0066,#ff3366);color:#fff;box-shadow:0 4px 20px rgba(255,0,102,.35)}
+.status{display:flex;align-items:center;gap:10px;padding:12px;background:rgba(0,0,0,.4);border-radius:10px;border:1px solid rgba(255,255,255,.05);margin-bottom:12px;font-size:12px}
+.dot{width:10px;height:10px;border-radius:50%;background:#6b7280;box-shadow:0 0 10px currentColor;transition:.3s}
+.dot.on{background:#00ffaa;color:#00ffaa;animation:pulse 1.5s infinite}
+.dot.err{background:#ff3366;color:#ff3366}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.info{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.info-item{background:rgba(0,0,0,.3);padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.04)}
+.info-item .k{font-size:9px;color:#6b7280;text-transform:uppercase;letter-spacing:1px}
+.info-item .v{font-size:12px;color:#00ffaa;font-weight:600;margin-top:3px;font-family:monospace}
+.log{background:#000;border:1px solid rgba(0,255,170,.15);border-radius:10px;padding:10px;font-family:monospace;font-size:10px;color:#00ffaa;max-height:120px;overflow-y:auto;line-height:1.6}
+.log .line{padding:2px 0;border-bottom:1px solid rgba(255,255,255,.03)}
+.log .line::before{content:'> ';color:#00d4ff}
+.footer{text-align:center;padding:16px;font-size:10px;color:#4b5563;letter-spacing:1px}
+</style></head><body>
+
+<div class="header">
+ <div class="logo">MG</div>
+ <div>
+  <div class="title">MALZGUARD</div>
+  <div class="subtitle">CONTROL PANEL v1.0</div>
+ </div>
+</div>
+
+<div class="pad">
+
+ <div class="card">
+  <div class="status">
+   <div class="dot" id="statusDot"></div>
+   <span id="statusText">OFFLINE</span>
+  </div>
+  <div class="info">
+   <div class="info-item"><div class="k">Device</div><div class="v" id="devInfo">-</div></div>
+   <div class="info-item"><div class="k">Android</div><div class="v" id="andInfo">-</div></div>
+  </div>
+ </div>
+
+ <div class="card">
+  <div class="card-title">Server Connection</div>
+  <label>Server URL</label>
+  <input id="serverUrl" placeholder="https://xxx.trycloudflare.com" autocomplete="off">
+  <button class="btn btn-primary" onclick="saveConnect()">Save & Connect</button>
+  <button class="btn btn-secondary" onclick="reqPerms()">Request Permissions</button>
+  <button class="btn btn-danger" onclick="disconnect()">Disconnect</button>
+ </div>
+
+ <div class="card">
+  <div class="card-title">Activity Log</div>
+  <div class="log" id="log"><div class="line">waiting...</div></div>
+ </div>
+
+ <div class="footer">MALZGUARD © 2025 — PRIVATE USE</div>
+
+</div>
+
+<script>
+function log(msg){
+ var el=document.getElementById('log');
+ var d=document.createElement('div');
+ d.className='line';
+ var t=new Date().toLocaleTimeString();
+ d.textContent='['+t+'] '+msg;
+ el.insertBefore(d,el.firstChild);
+ while(el.children.length>30) el.removeChild(el.lastChild);
+}
+function setStatus(on,text){
+ var dot=document.getElementById('statusDot');
+ var st=document.getElementById('statusText');
+ dot.className='dot '+(on?'on':'err');
+ st.textContent=text||(on?'CONNECTED':'OFFLINE');
+ st.style.color=on?'#00ffaa':'#ff3366';
+}
+function init(){
+ try{
+  var s=Native.getServer();
+  if(s) document.getElementById('serverUrl').value=s;
+  var info=Native.deviceInfo();
+  var parts=info.split('|');
+  document.getElementById('devInfo').textContent=(parts[0]||'-').trim();
+  document.getElementById('andInfo').textContent=(parts[1]||'-').trim();
+  if(s){ setStatus(true,'CONNECTING'); log('server: '+s); }
+  else log('masukin server URL dulu');
+ }catch(e){ log('init error: '+e.message); }
+}
+function saveConnect(){
+ var u=document.getElementById('serverUrl').value.trim();
+ if(!u){ log('URL kosong'); return; }
+ try{
+  Native.saveServer(u);
+  Native.start();
+  setStatus(true,'CONNECTING');
+  log('saved: '+u);
+  log('service started');
+  reqPerms();
+ }catch(e){ log('err: '+e.message); }
+}
+function disconnect(){
+ try{ Native.stop(); setStatus(false,'OFFLINE'); log('disconnected'); }catch(e){ log('err: '+e.message); }
+}
+function reqPerms(){
+ try{ Native.requestPerms(); log('requesting permissions...'); }catch(e){ log('err: '+e.message); }
+}
+window.onload=init;
+setInterval(function(){
+ try{
+  var s=Native.getServer();
+  if(s && document.getElementById('statusText').textContent==='CONNECTING'){
+   setStatus(true,'CONNECTED');
+  }
+ }catch(e){}
+},3000);
+</script>
+</body></html>
