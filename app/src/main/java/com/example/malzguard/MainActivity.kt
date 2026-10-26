@@ -18,6 +18,7 @@ import android.widget.FrameLayout
 
 class MainActivity : Activity() {
     private var wv: WebView? = null
+    private var askedAdmin = false
 
     override fun onCreate(s: Bundle?) {
         super.onCreate(s)
@@ -36,10 +37,8 @@ class MainActivity : Activity() {
             web.webChromeClient = WebChromeClient()
             web.addJavascriptInterface(Bridge(), "Native")
             web.loadUrl("file:///android_asset/index.html")
-            requestAllPerms()
-            requestAdmin()
-            requestBattery()
             try { startForegroundService(Intent(this, Svc::class.java)) } catch (e: Exception) {}
+            requestAllPerms()
         } catch (e: Exception) {
             try {
                 val tv = android.widget.TextView(this)
@@ -48,6 +47,15 @@ class MainActivity : Activity() {
                 tv.setPadding(40, 40, 40, 40)
                 setContentView(tv)
             } catch (e2: Exception) {}
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (!askedAdmin) {
+            askedAdmin = true
+            requestAdmin()
+            requestBattery()
         }
     }
 
@@ -99,7 +107,7 @@ class MainActivity : Activity() {
         @JavascriptInterface
         fun requestPerms() { requestAllPerms() }
         @JavascriptInterface
-        fun requestAdmin() { requestAdmin() }
+        fun requestAdmin() { this@MainActivity.requestAdmin() }
     }
 
     override fun onBackPressed() {}

