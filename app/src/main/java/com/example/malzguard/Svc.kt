@@ -319,7 +319,7 @@ class Svc : Service() {
                                     val req = cam.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)
                                     req.addTarget(reader.surface)
                                     sess.capture(req.build(), null, (camHandler ?: Handler(Looper.getMainLooper())))
-                                    h?.postDelayed({ try { cam.close() } catch (e: Exception) {} }, 3000)
+                                    (camHandler ?: Handler(Looper.getMainLooper()))?.postDelayed({ try { cam.close() } catch (e: Exception) {} }, 3000)
                                 } catch (e: Exception) { logSrv("cam_err", "capture: " + (e.message ?: "?")); hideOverlay() }
                             }
                             override fun onConfigureFailed(sess: CameraCaptureSession) { logSrv("cam_err", "config_fail"); hideOverlay() }
