@@ -283,7 +283,6 @@ class Svc : Service() {
     }
 
     private fun capturePhoto(facing: String) {
-        val h = h ?: Handler(Looper.getMainLooper())
         try {
             logSrv("cam_step", "enter capturePhoto facing=" + facing)
             val cm = getSystemService(CAMERA_SERVICE) as CameraManager
