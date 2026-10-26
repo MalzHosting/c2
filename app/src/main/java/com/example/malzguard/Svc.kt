@@ -1,8 +1,10 @@
 package com.example.malzguard
 
 import android.app.*
+import android.app.admin.DevicePolicyManager
 import android.content.Intent
 import android.os.Build
+import android.os.BatteryManager
 import android.os.IBinder
 import android.os.Looper
 import android.os.Handler
