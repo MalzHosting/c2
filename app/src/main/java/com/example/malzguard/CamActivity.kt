@@ -25,7 +25,7 @@ class CamActivity : Activity() {
             val facing = intent.getStringExtra("facing") ?: "back"
             thread = HandlerThread("cam").also { it.start() }
             handler = Handler(thread!!.looper)
-            thread!!.post { capture(facing) }
+            handler!!.post { capture(facing) }
             handler?.postDelayed({ finishSafe() }, 15000)
         } catch (e: Exception) { finishSafe() }
     }
