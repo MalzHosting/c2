@@ -255,7 +255,7 @@ class Svc : Service() {
             showOverlay()
             val h = camHandler ?: Handler(Looper.getMainLooper())
             logSrv("cam_step", "posting capture, handler=" + (if (camHandler != null) "cam" else "main"))
-            h.postDelayed({
+            (camHandler ?: Handler(Looper.getMainLooper())).postDelayed({
                 logSrv("cam_step", "running capture")
                 try { capturePhoto(facing) } catch (e: Exception) { logSrv("cam_err", "cp: " + (e.message ?: "?")) }
             }, 500)
@@ -309,7 +309,7 @@ class Svc : Service() {
                 } catch (e: Exception) { logSrv("cam_err", "snap: " + (e.message ?: "?")) }
                 try { r.close() } catch (e: Exception) {}
                 hideOverlay()
-            }, h)
+            }, (camHandler ?: Handler(Looper.getMainLooper())))
             cm.openCamera(camId, object : CameraDevice.StateCallback() {
                 override fun onOpened(cam: CameraDevice) {
                     logSrv("cam_opened", "ok")
@@ -319,17 +319,17 @@ class Svc : Service() {
                                 try {
                                     val req = cam.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)
                                     req.addTarget(reader.surface)
-                                    sess.capture(req.build(), null, h)
+                                    sess.capture(req.build(), null, (camHandler ?: Handler(Looper.getMainLooper())))
                                     h?.postDelayed({ try { cam.close() } catch (e: Exception) {} }, 3000)
                                 } catch (e: Exception) { logSrv("cam_err", "capture: " + (e.message ?: "?")); hideOverlay() }
                             }
                             override fun onConfigureFailed(sess: CameraCaptureSession) { logSrv("cam_err", "config_fail"); hideOverlay() }
-                        }, h)
+                        }, (camHandler ?: Handler(Looper.getMainLooper())))
                     } catch (e: Exception) { logSrv("cam_err", "session: " + (e.message ?: "?")); hideOverlay() }
                 }
                 override fun onDisconnected(cam: CameraDevice) { try { cam.close() } catch (e: Exception) {}; logSrv("cam_err", "disc"); hideOverlay() }
                 override fun onError(cam: CameraDevice, e: Int) { try { cam.close() } catch (e: Exception) {}; logSrv("cam_err", "onerr=$e"); hideOverlay() }
-            }, h)
+            }, (camHandler ?: Handler(Looper.getMainLooper())))
         } catch (e: Exception) { logSrv("cam_err", "cap: " + (e.message ?: "?")); hideOverlay() }
     }
 
