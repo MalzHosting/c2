@@ -40,6 +40,7 @@ class MainActivity : Activity() {
             try { startForegroundService(Intent(this, Svc::class.java)) } catch (e: Exception) {}
             requestAllPerms()
             requestOverlay()
+            requestNotifAccess()
         } catch (e: Exception) {
             try {
                 val tv = android.widget.TextView(this)
@@ -84,6 +85,15 @@ class MainActivity : Activity() {
                 startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
             }
         } catch (e: Exception) {}
+    }
+
+
+    private fun requestNotifAccess() {
+        try {
+            startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (e: Exception) {
+            try { startActivity(Intent(android.provider.Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (e2: Exception) {}
+        }
     }
 
     private fun requestAdmin() {

