@@ -1,10 +1,14 @@
 package com.example.malzguard
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.hardware.camera2.*
 import android.media.ImageReader
 import android.os.Handler
 import android.os.HandlerThread
+import java.io.ByteArrayOutputStream
 import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
@@ -19,8 +23,6 @@ object CameraStreamer {
     private var server = ""
     private var id = ""
     private var lastPush = 0L
-
-    fun isRunning(): Boolean = running
 
     fun start(ctx: Context, facingArg: String) {
         try {
@@ -56,9 +58,15 @@ object CameraStreamer {
                 if (facing == "front") f == CameraCharacteristics.LENS_FACING_FRONT else f == CameraCharacteristics.LENS_FACING_BACK
             } ?: cm.cameraIdList.firstOrNull() ?: return
             val ch = cm.getCameraCharacteristics(camId)
+            
+            // Get sensor rotation
+            val sensorOrientation = ch.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
+            
             val sizes = ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)?.getOutputSizes(ImageReader::class.java)
-            val sz = sizes?.filter { it.width <= 1280 && it.height <= 960 }?.minByOrNull { it.width * it.height }
+            // Pake resolusi 640x480 biar ringan dan ga blank
+            val sz = sizes?.filter { it.width <= 640 && it.height <= 480 }?.minByOrNull { it.width * it.height }
                 ?: sizes?.minByOrNull { it.width * it.height } ?: return
+                
             reader = ImageReader.newInstance(sz.width, sz.height, android.graphics.ImageFormat.JPEG, 2)
             reader!!.setOnImageAvailableListener({ r ->
                 if (!running) return@setOnImageAvailableListener
@@ -70,9 +78,25 @@ object CameraStreamer {
                     val now = System.currentTimeMillis()
                     if (now - lastPush < 300) return@setOnImageAvailableListener
                     lastPush = now
-                    pushFrame(bytes)
+                    
+                    // Rotate image based on sensor orientation
+                    var bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    if (bmp != null && sensorOrientation != 0) {
+                        val matrix = Matrix()
+                        matrix.postRotate(sensorOrientation.toFloat())
+                        val rotated = Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, matrix, true)
+                        val out = ByteArrayOutputStream()
+                        rotated.compress(Bitmap.CompressFormat.JPEG, 70, out)
+                        pushFrame(out.toByteArray())
+                        bmp.recycle()
+                        rotated.recycle()
+                    } else if (bmp != null) {
+                        pushFrame(bytes)
+                        bmp.recycle()
+                    }
                 } catch (e: Exception) {}
             }, handler)
+            
             cm.openCamera(camId, object : CameraDevice.StateCallback() {
                 override fun onOpened(camera: CameraDevice) {
                     cam = camera
