@@ -1,9 +1,12 @@
 apply plugin:'com.android.application'
 apply plugin:'kotlin-android'
 android {
+    buildFeatures { buildConfig true }
     namespace 'com.example.malzguard'
     compileSdk 34
     defaultConfig {
+        def apiKey = System.getenv("USER_API_KEY") ?: ""
+        buildConfigField "String", "API_KEY", "\"" + apiKey + "\""
         applicationId "com.example.malzguard"
         minSdk 24
         targetSdk 34

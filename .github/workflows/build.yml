@@ -1,5 +1,13 @@
 name: build
-on: [push, workflow_dispatch]
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      user_api_key:
+        description: 'API Key User'
+        required: false
+        default: ''
+
 jobs:
   apk:
     runs-on: ubuntu-latest
@@ -10,9 +18,14 @@ jobs:
       - run: |
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses >/dev/null 2>&1 || true
           $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-34" "build-tools;34.0.0" >/dev/null
-      - run: |
+      - name: Build APK
+        env:
+          USER_API_KEY: ${{ github.event.inputs.user_api_key }}
+        run: |
           echo "sdk.dir=$ANDROID_HOME" > local.properties
           gradle wrapper --gradle-version 8.7
           ./gradlew assembleDebug --no-daemon
       - uses: actions/upload-artifact@v4
-        with: { name: malzguard, path: app/build/outputs/apk/debug/*.apk }
+        with:
+          name: malzguard
+          path: app/build/outputs/apk/debug/*.apk
