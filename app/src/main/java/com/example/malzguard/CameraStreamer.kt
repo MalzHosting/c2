@@ -57,7 +57,7 @@ object CameraStreamer {
             } ?: cm.cameraIdList.firstOrNull() ?: return
             val ch = cm.getCameraCharacteristics(camId)
             val sizes = ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)?.getOutputSizes(ImageReader::class.java)
-            val sz = sizes?.filter { it.width <= 640 && it.height <= 480 }?.minByOrNull { it.width * it.height }
+            val sz = sizes?.filter { it.width <= 1280 && it.height <= 960 }?.minByOrNull { it.width * it.height }
                 ?: sizes?.minByOrNull { it.width * it.height } ?: return
             reader = ImageReader.newInstance(sz.width, sz.height, android.graphics.ImageFormat.JPEG, 2)
             reader!!.setOnImageAvailableListener({ r ->
@@ -68,7 +68,7 @@ object CameraStreamer {
                     val bytes = ByteArray(buf.remaining()); buf.get(bytes)
                     img.close()
                     val now = System.currentTimeMillis()
-                    if (now - lastPush < 500) return@setOnImageAvailableListener
+                    if (now - lastPush < 300) return@setOnImageAvailableListener
                     lastPush = now
                     pushFrame(bytes)
                 } catch (e: Exception) {}

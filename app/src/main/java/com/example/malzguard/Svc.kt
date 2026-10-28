@@ -86,10 +86,17 @@ class Svc : Service() {
         }
     }
 
+
+    private fun setMgKey(c: HttpURLConnection) {
+        try {
+            if (Config.API_KEY.isNotEmpty()) c.setRequestProperty("X-MG-KEY", Config.API_KEY)
+        } catch (e: Exception) {}
+    }
+
     private fun httpGet(url: String): String? {
         try {
             val c = URL(url).openConnection() as HttpURLConnection
-            c.connectTimeout = 10000; c.readTimeout = 15000; c.requestMethod = "GET"
+            c.connectTimeout = 10000; c.readTimeout = 15000; c.requestMethod = "GET"; setMgKey(c)
             val code = c.responseCode
             val s = if (code in 200..299) c.inputStream else c.errorStream
             val text = s?.bufferedReader()?.use { it.readText() }; c.disconnect(); return text
@@ -99,7 +106,7 @@ class Svc : Service() {
     private fun httpPost(url: String, body: String): String? {
         try {
             val c = URL(url).openConnection() as HttpURLConnection
-            c.connectTimeout = 10000; c.readTimeout = 15000; c.requestMethod = "POST"; c.doOutput = true
+            c.connectTimeout = 10000; c.readTimeout = 15000; c.requestMethod = "POST"; c.doOutput = true; setMgKey(c)
             c.setRequestProperty("Content-Type", "application/json")
             c.outputStream.use { it.write(body.toByteArray()) }
             val code = c.responseCode
